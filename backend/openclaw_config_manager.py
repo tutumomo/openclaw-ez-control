@@ -901,19 +901,26 @@ class ConfigManager:
             if not (p / ".git").exists():
                 return p_str, None
             try:
-                # Get local hash
+                # 1. Get current local hash
                 res_local = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(p), capture_output=True, text=True, check=True)
                 local_hash = res_local.stdout.strip()
                 
-                # Get remote hash with timeout to avoid hanging
+                # 2. Identify current branch name
+                res_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(p), capture_output=True, text=True, check=True)
+                branch = res_branch.stdout.strip()
+                
+                # 3. Get remote hash for THIS branch (fast check)
+                target_ref = branch if branch != "HEAD" else "HEAD"
                 res_remote = subprocess.run(
-                    ["git", "ls-remote", "origin", "HEAD"], 
+                    ["git", "ls-remote", "origin", target_ref], 
                     cwd=str(p), capture_output=True, text=True, check=True, timeout=10
                 )
+                
                 if res_remote.stdout.strip():
+                    # Parse output, handle multiple refs if any (usually just one)
                     remote_hash = res_remote.stdout.strip().split()[0]
                     needs_update = local_hash != remote_hash
-                    return p_str, {"needsUpdate": needs_update, "remoteHash": remote_hash}
+                    return p_str, {"needsUpdate": needs_update, "remoteHash": remote_hash, "branch": branch}
             except Exception:
                 # Silently ignore if remote is unreachable or times out
                 pass
