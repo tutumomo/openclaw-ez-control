@@ -46,6 +46,25 @@ call "%ACTIVATE_BAT%"
 python -m pip install --upgrade pip >nul 2>nul
 pip install -r "%BACKEND_DIR%\requirements.txt" >nul 2>nul
 
+REM 5. Check Frontend Build
+set "FRONTEND_DIR=%BASE_DIR%frontend"
+set "DIST_DIR=%FRONTEND_DIR%\dist"
+
+if not exist "%DIST_DIR%" (
+    echo [SYSTEM] Frontend build NOT found! Initializing auto-build...
+    cd /d "%FRONTEND_DIR%"
+    echo [SYSTEM] Installing frontend dependencies...
+    call npm install && call npm run build
+    if %ERRORLEVEL% neq 0 (
+        echo [ERROR] Frontend auto-build FAILED!
+        echo Please try manual build via clean_and_build_frontend.bat
+        pause
+        exit /b 1
+    )
+    echo [STATUS] Frontend auto-build SUCCESSFUL.
+    cd /d "%BASE_DIR%"
+)
+
 REM 6. Set Port (Default: 8002)
 set PORT=8002
 if not "%1"=="" set PORT=%1

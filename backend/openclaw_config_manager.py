@@ -706,16 +706,31 @@ class ConfigManager:
         entries = config.get("skills", {}).get("entries", {})
         
         # Get available agents and build dynamic workspace paths
-        agent_names = list(config.get("agents", {}).keys())
+        agents_section = config.get("agents", {})
+        agent_list = agents_section.get("list", [])
+        
         search_dirs = [
             Path.home() / ".openclaw" / "skills",
+            Path.home() / ".openclaw" / "workspace" / "skills",
             Path.home() / ".agents" / "skills",
             Path.home() / ".gemini" / "antigravity" / "skills"
         ]
         
-        # Add all agent specific skill paths
-        for agent_name in agent_names:
-            search_dirs.append(Path.home() / ".openclaw" / "agents" / agent_name / "skills")
+        # Add all agent specific skill paths (state dir and defined workspace)
+        for agent in agent_list:
+            agent_id = agent.get("id")
+            if agent_id:
+                # 1. State dir skills
+                search_dirs.append(Path.home() / ".openclaw" / "agents" / agent_id / "skills")
+            
+            # 2. Workspace skills (if defined)
+            ws_path = agent.get("workspace")
+            if ws_path:
+                try:
+                    ws_skills = Path(ws_path).expanduser() / "skills"
+                    search_dirs.append(ws_skills)
+                except Exception:
+                    pass
 
         local_skills: Dict[str, Dict[str, Any]] = {}
         
@@ -740,8 +755,10 @@ class ConfigManager:
             dir_str = str(base_dir)
             if dir_str == str(Path.home() / ".openclaw" / "skills"):
                 category = "global"
-            elif "/agents/" in dir_str or ".agents/skills" in dir_str or ".gemini/antigravity" in dir_str:
+            elif "/agents/" in dir_str or "/workspace/" in dir_str or ".openclaw/workspace" in dir_str:
                 category = "workspace"
+            elif ".agents/skills" in dir_str or ".gemini/antigravity" in dir_str:
+                category = "system"
 
             for item in base_dir.iterdir():
                 if item.is_dir() and not item.name.startswith("."):
@@ -868,7 +885,7 @@ class ConfigManager:
             agent_name = target.split(":", 1)[1]
             base_dir = Path.home() / ".openclaw" / "agents" / agent_name / "skills"
         else:
-            base_dir = Path.home() / ".agents" / "skills"
+            base_dir = Path.home() / ".openclaw" / "workspace" / "skills"
 
         base_dir.mkdir(parents=True, exist_ok=True)
         
@@ -956,26 +973,56 @@ class ConfigManager:
         return {"success": True, "message": f"Agent {agent_id} 更新成功"}
 
     def get_agent_markdown_files(self, agent_id: str) -> List[Dict[str, Any]]:
-        agent_dir = Path.home() / ".openclaw" / "agents" / agent_id
-        if not agent_dir.exists() or not agent_dir.is_dir():
-            return []
-            
+        # 1. 確定私體目錄 (State Dir)
+        state_dir = Path.home() / ".openclaw" / "agents" / agent_id
+        
+        # 2. 從配置中獲取定義的工作空間 (Workspace Dir)
+        workspace_dir: Optional[Path] = None
+        try:
+            config = self.load()
+            agents = config.get("agents", {}).get("list", [])
+            target_agent = next((a for a in agents if a.get("id") == agent_id), None)
+            if target_agent and target_agent.get("workspace"):
+                workspace_dir = Path(target_agent.get("workspace")).expanduser()
+        except Exception as e:
+            logger.error(f"Error loading config for agent {agent_id}: {e}")
+
         whitelist = ['AGENTS.md', 'IDENTITY.md', 'SOUL.md', 'USER.md', 'HEARTBEAT.md', 'MEMORY.md']
         results = []
         
         for filename in whitelist:
-            p = agent_dir / filename
-            if p.exists() and p.is_file():
-                try:
-                    content = p.read_text(encoding='utf-8')
-                    results.append({
-                        "filename": filename,
-                        "content": content,
-                        "sizeBytes": p.stat().st_size,
-                        "modifiedAt": datetime.fromtimestamp(p.stat().st_mtime).isoformat()
-                    })
-                except Exception:
-                    pass
+            state_p = state_dir / filename
+            ws_p = workspace_dir / filename if workspace_dir else None
+            
+            exists_in_state = state_p.exists() and state_p.is_file()
+            exists_in_ws = ws_p and ws_p.exists() and ws_p.is_file()
+            
+            if not exists_in_state and not exists_in_ws:
+                continue
+                
+            # 決定讀取來源 (優先讀取 Workspace)
+            primary_p = ws_p if exists_in_ws else state_p
+            origin = "workspace" if exists_in_ws else "state"
+            warning = None
+            
+            if exists_in_state and exists_in_ws:
+                origin = "both"
+                warning = f"偵測到衝突：檔案同時存在於私體目錄 ({state_dir}) 與工作空間 ({workspace_dir})。目前優先顯示工作空間版本。"
+            
+            try:
+                content = primary_p.read_text(encoding='utf-8')
+                results.append({
+                    "filename": filename,
+                    "content": content,
+                    "sizeBytes": primary_p.stat().st_size,
+                    "modifiedAt": datetime.fromtimestamp(primary_p.stat().st_mtime).isoformat(),
+                    "origin": origin,
+                    "warning": warning,
+                    "path": str(primary_p)
+                })
+            except Exception as e:
+                logger.error(f"Error reading agent file {filename}: {e}")
+                
         return results
 
     def save_agent_markdown_file(self, agent_id: str, filename: str, content: str) -> Dict[str, Any]:
@@ -983,20 +1030,49 @@ class ConfigManager:
         if filename not in whitelist:
             return {"success": False, "message": "不允許編輯此檔案類型"}
             
-        agent_dir = Path.home() / ".openclaw" / "agents" / agent_id
-        if not agent_dir.exists():
-            return {"success": False, "message": f"Agent 目錄 {agent_id} 不存在"}
-            
-        p = agent_dir / filename
+        # 1. 獲取可能的所有路徑
+        state_dir = Path.home() / ".openclaw" / "agents" / agent_id
+        workspace_dir: Optional[Path] = None
         try:
-            # Backup before overwrite if it exists
-            if p.exists():
-                backup_p = p.with_suffix(f'.md.bak')
+            config = self.load()
+            agents = config.get("agents", {}).get("list", [])
+            target_agent = next((a for a in agents if a.get("id") == agent_id), None)
+            if target_agent and target_agent.get("workspace"):
+                workspace_dir = Path(target_agent.get("workspace")).expanduser()
+        except Exception:
+            pass
+            
+        state_p = state_dir / filename
+        ws_p = workspace_dir / filename if workspace_dir else None
+        
+        # 2. 決定保存路徑 (優先保存至 Workspace)
+        # 如果兩處都存在，保存至 Workspace 並警告
+        # 如果只有一處存在，保存至該處
+        # 如果都無，保存至 Workspace (若有定義) 否則 State
+        target_p = ws_p if ws_p else state_p
+        
+        # 針對同時存在的警告
+        warning = None
+        if ws_p and ws_p.exists() and state_p.exists():
+            warning = f"注意：檔案同時存在於工作空間與私體目錄。已更新工作空間版本，請手動清理私體目錄中的 {filename} 以避免衝突。"
+
+        try:
+            # 建立父目錄
+            target_p.parent.mkdir(parents=True, exist_ok=True)
+            
+            # 備份
+            if target_p.exists():
+                backup_p = target_p.with_suffix(f'.md.bak')
                 import shutil
-                shutil.copy2(p, backup_p)
+                shutil.copy2(target_p, backup_p)
                 
-            p.write_text(content, encoding='utf-8')
-            return {"success": True, "message": f"檔案 {filename} 已成功儲存"}
+            target_p.write_text(content, encoding='utf-8')
+            return {
+                "success": True, 
+                "message": f"檔案 {filename} 已成功儲存",
+                "warning": warning,
+                "path": str(target_p)
+            }
         except Exception as e:
             return {"success": False, "message": f"儲存失敗: {str(e)}"}
 
