@@ -1,0 +1,29 @@
+# Node
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env
+
+# OpenClaw Specific
+server.log
+backend/~/
+*.db
+*.db-shm
+*.db-wal
+backups/
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
