@@ -765,7 +765,7 @@ class ConfigManager:
             for item in base_dir.iterdir():
                 if item.is_dir() and not item.name.startswith("."):
                     skill_id = item.name
-                    path_str = str(item)
+                    path_str = item.as_posix() # Normalized to forward slashes
                     if path_str not in local_skills:
                         is_git = (item / ".git").exists()
                         git_info = get_git_info(item) if is_git else None
@@ -894,12 +894,11 @@ class ConfigManager:
         import subprocess
         from concurrent.futures import ThreadPoolExecutor, as_completed
         
-        results = {}
-        
         def check_single_skill(p_str: str) -> tuple:
             p = Path(p_str)
+            norm_path = p.as_posix() 
             if not (p / ".git").exists():
-                return p_str, None
+                return norm_path, None
             try:
                 # 1. Get current local hash
                 res_local = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(p), capture_output=True, text=True, check=True)
@@ -909,29 +908,35 @@ class ConfigManager:
                 res_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(p), capture_output=True, text=True, check=True)
                 branch = res_branch.stdout.strip()
                 
-                # 3. Get remote hash for THIS branch (fast check)
+                # 3. Get remote hash for THIS branch
                 target_ref = branch if branch != "HEAD" else "HEAD"
+                
                 res_remote = subprocess.run(
                     ["git", "ls-remote", "origin", target_ref], 
                     cwd=str(p), capture_output=True, text=True, check=True, timeout=10
                 )
                 
                 if res_remote.stdout.strip():
-                    # Parse output, handle multiple refs if any (usually just one)
                     remote_hash = res_remote.stdout.strip().split()[0]
                     needs_update = local_hash != remote_hash
-                    return p_str, {"needsUpdate": needs_update, "remoteHash": remote_hash, "branch": branch}
+                    return norm_path, {"needsUpdate": needs_update, "remoteHash": remote_hash, "branch": branch}
+                else:
+                    # Remote ref not found or origin missing
+                    return norm_path, {"needsUpdate": False, "status": "unknown"}
             except Exception:
-                # Silently ignore if remote is unreachable or times out
-                pass
-            return p_str, None
+                # Return 'no update' to avoid UI flickering if remote unreachable
+                return norm_path, {"needsUpdate": False, "status": "error"}
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        results = {}
+        with ThreadPoolExecutor(max_workers=min(len(paths), 8)) as executor:
             future_to_path = {executor.submit(check_single_skill, p_str): p_str for p_str in paths}
             for future in as_completed(future_to_path):
-                p_str, res = future.result()
-                if res is not None:
-                    results[p_str] = res
+                try:
+                    p_str, res = future.result()
+                    if res is not None:
+                        results[p_str] = res
+                except Exception:
+                    pass
                     
         return results
 
