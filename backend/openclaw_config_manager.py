@@ -1020,6 +1020,14 @@ class ConfigManager:
         if not found:
             return {"success": False, "message": f"找不到 Agent ID: {agent_id}"}
             
+        # Proactively flatten skills if they come in the old object format from the UI
+        agent_obj = agent_list[i]
+        if "skills" in agent_obj and isinstance(agent_obj["skills"], dict):
+            if "allow" in agent_obj["skills"]:
+                agent_obj["skills"] = agent_obj["skills"]["allow"]
+            else:
+                agent_obj["skills"] = []
+
         self.save_with_safety(config)
         return {"success": True, "message": f"Agent {agent_id} 更新成功"}
 
@@ -1284,8 +1292,14 @@ class ConfigManager:
                 changes.append("已整理並排序工具權限清單 (Tools.Allow)")
 
         # 2. 優化技能列表：去重並排序
-        skills = target.get("skills", {})
-        if isinstance(skills, dict) and "allow" in skills:
+        skills = target.get("skills")
+        if isinstance(skills, list):
+            original = skills
+            optimized = sorted(list(set(original)))
+            if original != optimized:
+                target["skills"] = optimized
+                changes.append("已整理並排序技能權限清單 (Skills)")
+        elif isinstance(skills, dict) and "allow" in skills:
             original = skills["allow"]
             optimized = sorted(list(set(original)))
             if original != optimized:

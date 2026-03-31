@@ -195,7 +195,7 @@ export default function AgentsManager({ summary, allSkills, onRefresh }: AgentsM
   ];
 
   const currentTools = editingAgent.tools?.allow || [];
-  const currentSkills = editingAgent.skills?.allow || [];
+  const currentSkills = editingAgent.skills || [];
   const currentSubagents = editingAgent.subagents?.allowAgents || [];
 
   return (
@@ -508,7 +508,7 @@ export default function AgentsManager({ summary, allSkills, onRefresh }: AgentsM
                               const i = list.indexOf(skill.id);
                               if (i > -1) list.splice(i, 1);
                             }
-                            handleUpdateField('skills.allow', list);
+                            handleUpdateField('skills', list);
                           }}
                           className="w-4 h-4 rounded text-emerald-600 bg-slate-900 border-slate-700"
                         />

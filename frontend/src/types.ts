@@ -217,9 +217,7 @@ export interface AgentConfig {
   tools?: {
     allow?: string[];
   };
-  skills?: {
-    allow?: string[];
-  };
+  skills?: string[];
   subagents?: {
     allowAgents?: string[];
   };
