@@ -134,7 +134,10 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
 
   const renderSkillCard = (skill: SkillItem) => {
     const versionStatus = getVersionStatus(skill);
-    const updateStats = updateStatuses[skill.path];
+    // Normalize path for robust lookup
+    const normPath = skill.path.replace(/\\/g, '/');
+    const updateStats = updateStatuses[skill.path] || updateStatuses[normPath];
+    
     const isUpToDate = updateStats && !updateStats.needsUpdate;
     const isUpdateAvailable = updateStats && updateStats.needsUpdate;
     
@@ -319,7 +322,10 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {skills.some(s => s.isGitRepo && updateStatuses[s.path]?.needsUpdate) && (
+            {skills.some(s => {
+              const normPath = s.path.replace(/\\/g, '/');
+              return s.isGitRepo && (updateStatuses[s.path]?.needsUpdate || updateStatuses[normPath]?.needsUpdate);
+            }) && (
               <button
                 disabled={!!busy || checkingUpdates || isUpdatingAll}
                 onClick={handleUpdateAll}

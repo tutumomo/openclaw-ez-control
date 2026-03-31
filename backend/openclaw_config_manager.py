@@ -896,9 +896,8 @@ class ConfigManager:
         
         def check_single_skill(p_str: str) -> tuple:
             p = Path(p_str)
-            norm_path = p.as_posix() 
             if not (p / ".git").exists():
-                return norm_path, None
+                return p_str, None
             try:
                 # 1. Get current local hash
                 res_local = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(p), capture_output=True, text=True, check=True)
@@ -919,13 +918,13 @@ class ConfigManager:
                 if res_remote.stdout.strip():
                     remote_hash = res_remote.stdout.strip().split()[0]
                     needs_update = local_hash != remote_hash
-                    return norm_path, {"needsUpdate": needs_update, "remoteHash": remote_hash, "branch": branch}
+                    return p_str, {"needsUpdate": needs_update, "remoteHash": remote_hash, "branch": branch}
                 else:
                     # Remote ref not found or origin missing
-                    return norm_path, {"needsUpdate": False, "status": "unknown"}
+                    return p_str, {"needsUpdate": False, "status": "unknown"}
             except Exception:
                 # Return 'no update' to avoid UI flickering if remote unreachable
-                return norm_path, {"needsUpdate": False, "status": "error"}
+                return p_str, {"needsUpdate": False, "status": "error"}
 
         results = {}
         with ThreadPoolExecutor(max_workers=min(len(paths), 8)) as executor:
