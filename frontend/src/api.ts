@@ -1,5 +1,10 @@
 import axios from 'axios';
-import type { BackupsResponse, ConfigSummary, MemorySummaryResponse, ModelSummaryResponse, PluginWizardActionResult, PluginWizardSummaryResponse, RollbackResponse, SaveResponse, SystemStatus, ValidateResponse, TelegramChannelsResponse, SkillsSummaryResponse, TelegramAccount } from './types';
+import type { 
+  BackupsResponse, ConfigSummary, MemorySummaryResponse, ModelSummaryResponse, 
+  PluginWizardActionResult, PluginWizardSummaryResponse, RollbackResponse, 
+  SaveResponse, SystemStatus, ValidateResponse, TelegramChannelsResponse, 
+  SkillsSummaryResponse, TelegramAccount, SkillUpdateStatus 
+} from './types';
 
 const apiBaseURL = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '/api';
 
@@ -49,8 +54,10 @@ export const pullSkill = async (skillPath: string) =>
   (await api.post<{ success: boolean; stdout: string; stderr: string; message?: string }>('/skills/pull', { skillPath })).data;
 export const cloneSkill = async (gitUrl: string, target: string) =>
   (await api.post<{ success: boolean; stdout: string; stderr: string; message?: string }>('/skills/clone', { gitUrl, target })).data;
+export const fetchSkillMetadata = async (path: string): Promise<{ description: string; triggers: string[] }> =>
+  (await api.post<{ description: string; triggers: string[] }>('/skills/metadata', { path })).data;
 export const checkSkillUpdates = async (paths: string[]) =>
-  (await api.post<Record<string, import('./types').SkillUpdateStatus>>('/skills/check-updates', { paths }, { timeout: 0 })).data;
+  (await api.post<Record<string, SkillUpdateStatus>>('/skills/check-updates', { paths }, { timeout: 0 })).data;
 
 export const getAgents = async () => (await api.get<import('./types').AgentsSummaryResponse>('/agents')).data;
 export const updateAgent = async (agentId: string, updates: Partial<import('./types').AgentConfig>) =>

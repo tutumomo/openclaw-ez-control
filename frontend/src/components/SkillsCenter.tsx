@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Play, Square, Trash2, Github, Folder, Plus, Globe, Monitor, Code2, RefreshCw } from 'lucide-react';
+import { Download, Play, Square, Trash2, Github, Folder, Plus, Globe, Monitor, RefreshCw, Loader2 } from 'lucide-react';
 import type { SkillItem, SkillUpdateStatus } from '../types';
-import { checkSkillUpdates } from '../api';
+import { checkSkillUpdates, fetchSkillMetadata } from '../api';
 
 interface SkillsCenterProps {
   skills: SkillItem[];
@@ -22,6 +22,8 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
   const [cloneTarget, setCloneTarget] = useState('global');
   const [updateStatuses, setUpdateStatuses] = useState<Record<string, SkillUpdateStatus>>({});
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [metadataCache, setMetadataCache] = useState<Record<string, { description: string; triggers: string[] }>>({});
+  const [loadingMetadata, setLoadingMetadata] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const gitPaths = skills.filter(s => s.isGitRepo).map(s => s.path);
@@ -40,6 +42,20 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
 
     return () => { isMounted = false; };
   }, [skills]);
+
+  const handleMouseEnter = async (skill: SkillItem) => {
+    if (metadataCache[skill.path] || loadingMetadata[skill.path] || skill.path === "Unknown") return;
+    
+    setLoadingMetadata(prev => ({ ...prev, [skill.path]: true }));
+    try {
+      const meta = await fetchSkillMetadata(skill.path);
+      setMetadataCache(prev => ({ ...prev, [skill.path]: meta }));
+    } catch (err) {
+      console.error("Failed to fetch metadata:", err);
+    } finally {
+      setLoadingMetadata(prev => ({ ...prev, [skill.path]: false }));
+    }
+  };
 
   const confirmRemove = (skill: SkillItem) => {
     if (window.confirm(`確認要移除技能 ${skill.id} 嗎？\n\n按下「取消」只取消註冊設定檔。\n按下「確定」將會連帶從磁碟刪除資料夾。`)) {
@@ -107,42 +123,58 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
     const isUpToDate = updateStats && !updateStats.needsUpdate;
     const isUpdateAvailable = updateStats && updateStats.needsUpdate;
     
+    const meta = metadataCache[skill.path];
+    const isLoading = loadingMetadata[skill.path];
+    const hasInfo = meta && (meta.description || meta.triggers.length > 0);
+
     return (
-    <div key={skill.path} className={`bg-slate-900/50 rounded-xl p-5 border flex flex-col gap-4 shadow-md transition group relative ${versionStatus === 'duplicate' || versionStatus === 'older' ? 'border-red-500/30 hover:border-red-500/60' : 'border-white/5 hover:border-white/20'}`}>
+    <div 
+      key={skill.path} 
+      onMouseEnter={() => handleMouseEnter(skill)}
+      className={`bg-slate-900/50 rounded-xl p-5 border flex flex-col gap-4 shadow-md transition group relative ${versionStatus === 'duplicate' || versionStatus === 'older' ? 'border-red-500/30 hover:border-red-500/60' : 'border-white/5 hover:border-white/20'}`}
+    >
       
       {/* Tooltip Bubble */}
-      {(skill.description || (skill.triggers && skill.triggers.length > 0)) && (
+      {(hasInfo || isLoading) && (
         <div className="absolute left-1/2 -top-2 transform -translate-x-1/2 -translate-y-full mb-2 w-72 opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none z-[100] scale-95 group-hover:scale-100">
           <div className="bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-2xl overflow-hidden relative">
             <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500" />
-            <div className="space-y-4">
-              {skill.description && (
-                <div>
-                  <div className="flex items-center gap-2 text-indigo-400 mb-1">
-                    <Globe className="w-3.5 h-3.5" />
-                    <span className="text-[10px] uppercase tracking-wider font-bold">用途說明</span>
+            
+            {isLoading ? (
+              <div className="flex items-center justify-center py-4 gap-2 text-slate-400">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="text-xs">讀取說明中...</span>
+              </div>
+            ) : meta && (
+              <div className="space-y-4">
+                {meta.description && (
+                  <div>
+                    <div className="flex items-center gap-2 text-indigo-400 mb-1">
+                      <Globe className="w-3.5 h-3.5" />
+                      <span className="text-[10px] uppercase tracking-wider font-bold">用途說明</span>
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed font-medium">
+                      {meta.description}
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-300 leading-relaxed font-medium">
-                    {skill.description}
-                  </p>
-                </div>
-              )}
-              {skill.triggers && skill.triggers.length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 text-teal-400 mb-1">
-                    <Plus className="w-3.5 h-3.5" />
-                    <span className="text-[10px] uppercase tracking-wider font-bold">觸發指令</span>
+                )}
+                {meta.triggers && meta.triggers.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 text-teal-400 mb-1">
+                      <Plus className="w-3.5 h-3.5" />
+                      <span className="text-[10px] uppercase tracking-wider font-bold">觸發指令</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {meta.triggers.map((t, idx) => (
+                        <span key={idx} className="bg-slate-800 border border-white/5 px-2 py-0.5 rounded-md text-[10px] font-mono text-slate-400">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {skill.triggers.map((t, idx) => (
-                      <span key={idx} className="bg-slate-800 border border-white/5 px-2 py-0.5 rounded-md text-[10px] font-mono text-slate-400">
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </div>
           {/* Arrow */}
           <div className="w-3 h-3 bg-slate-900 border-r border-b border-white/10 transform rotate-45 mx-auto -mt-1.5" />
@@ -310,7 +342,7 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
           {groupedSkills.system.length > 0 && (
             <section>
               <h3 className="text-xl border-b border-white/10 pb-2 mb-4 flex items-center gap-2 text-slate-300 font-semibold">
-                <Code2 className="w-5 h-5 text-slate-400" /> 系統或外部技能 (System/Other)
+                <RefreshCw className="w-5 h-5 text-slate-400" /> 系統或外部技能 (System/Other)
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {groupedSkills.system.map(renderSkillCard)}

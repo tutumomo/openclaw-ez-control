@@ -99,6 +99,10 @@ class SkillClonePayload(BaseModel):
     target: str
 
 
+class SkillMetadataPayload(BaseModel):
+    path: str
+
+
 class CheckUpdatesPayload(BaseModel):
     paths: List[str]
 
@@ -379,6 +383,15 @@ async def skills_clone(payload: SkillClonePayload):
     try:
         check_gateway_connection()
         return manager.clone_skill(payload.gitUrl, payload.target)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/skills/metadata")
+async def skills_metadata(payload: SkillMetadataPayload):
+    try:
+        check_gateway_connection()
+        return manager.get_skill_metadata(payload.path)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
