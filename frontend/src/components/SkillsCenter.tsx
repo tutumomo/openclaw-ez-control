@@ -108,7 +108,47 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
     const isUpdateAvailable = updateStats && updateStats.needsUpdate;
     
     return (
-    <div key={skill.path} className={`bg-slate-900/50 rounded-xl p-5 border flex flex-col gap-4 shadow-md transition ${versionStatus === 'duplicate' || versionStatus === 'older' ? 'border-red-500/30 hover:border-red-500/60' : 'border-white/5 hover:border-white/20'}`}>
+    <div key={skill.path} className={`bg-slate-900/50 rounded-xl p-5 border flex flex-col gap-4 shadow-md transition group relative ${versionStatus === 'duplicate' || versionStatus === 'older' ? 'border-red-500/30 hover:border-red-500/60' : 'border-white/5 hover:border-white/20'}`}>
+      
+      {/* Tooltip Bubble */}
+      {(skill.description || (skill.triggers && skill.triggers.length > 0)) && (
+        <div className="absolute left-1/2 -top-2 transform -translate-x-1/2 -translate-y-full mb-2 w-72 opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none z-[100] scale-95 group-hover:scale-100">
+          <div className="bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-2xl overflow-hidden relative">
+            <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500" />
+            <div className="space-y-4">
+              {skill.description && (
+                <div>
+                  <div className="flex items-center gap-2 text-indigo-400 mb-1">
+                    <Globe className="w-3.5 h-3.5" />
+                    <span className="text-[10px] uppercase tracking-wider font-bold">用途說明</span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed font-medium">
+                    {skill.description}
+                  </p>
+                </div>
+              )}
+              {skill.triggers && skill.triggers.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 text-teal-400 mb-1">
+                    <Plus className="w-3.5 h-3.5" />
+                    <span className="text-[10px] uppercase tracking-wider font-bold">觸發指令</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {skill.triggers.map((t, idx) => (
+                      <span key={idx} className="bg-slate-800 border border-white/5 px-2 py-0.5 rounded-md text-[10px] font-mono text-slate-400">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          {/* Arrow */}
+          <div className="w-3 h-3 bg-slate-900 border-r border-b border-white/10 transform rotate-45 mx-auto -mt-1.5" />
+        </div>
+      )}
+
       <div className="flex items-start justify-between relative">
         <div className="flex items-center gap-3">
           <div className={`p-2 rounded-lg ${skill.enabled ? 'bg-teal-500/10 text-teal-400' : 'bg-slate-800 text-slate-500'}`}>
@@ -168,7 +208,7 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
           {skill.enabled ? '停用' : '啟用'}
         </button>
         
-        <div className="flex-1 filter relative group">
+        <div className="flex-1 filter relative group/btn">
           <button
             disabled={!!busy || !skill.isGitRepo || pullingId === skill.id || isUpToDate}
             onClick={() => handlePullClick(skill)}
@@ -197,7 +237,7 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
             )}
           </button>
           {!skill.isGitRepo && (
-            <div className="absolute opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 text-xs rounded px-2 py-1 -top-8 left-1/2 transform -translate-x-1/2 whitespace-nowrap pointer-events-none z-20">
+            <div className="absolute opacity-0 group-hover/btn:opacity-100 transition-opacity bg-slate-800 text-xs rounded px-2 py-1 -top-8 left-1/2 transform -translate-x-1/2 whitespace-nowrap pointer-events-none z-20">
               此技能非 Git 倉庫，無法自動拉取
             </div>
           )}

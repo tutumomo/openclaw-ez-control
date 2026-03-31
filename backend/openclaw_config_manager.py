@@ -748,6 +748,56 @@ class ConfigManager:
                 pass
             return None
 
+        def parse_skill_metadata(p: Path) -> Dict[str, Any]:
+            md_files = ["SKILL.md", "README.md", f"{p.name}.md"]
+            desc = ""
+            triggers = []
+            
+            for md_name in md_files:
+                md_path = p / md_name
+                if md_path.exists():
+                    try:
+                        content = md_path.read_text(encoding="utf-8")
+                        lines = content.splitlines()
+                        
+                        # 1. Extract Description (First non-header paragraph)
+                        for line in lines:
+                            clean = line.strip()
+                            if clean and not clean.startswith("#") and not desc:
+                                desc = clean
+                                break
+                        
+                        # 2. Extract Triggers (Look for specific headers)
+                        # We look for lines after "Trigger" or "Command" or "觸發" or "指令"
+                        trigger_headers = ["觸發", "指令", "trigger", "command", "usage"]
+                        capturing = False
+                        for line in lines:
+                            clean = line.strip()
+                            if any(h in clean.lower() for h in trigger_headers) and clean.startswith("#"):
+                                capturing = True
+                                continue
+                            if capturing:
+                                if clean.startswith(("#")): # Next header, stop
+                                    capturing = False
+                                    if triggers: break
+                                    continue
+                                if clean.startswith(("-", "*", "1.")):
+                                    # Clean up the trigger text
+                                    t = clean.lstrip("- *1. `").rstrip("`").strip()
+                                    if t: triggers.append(t)
+                                    if len(triggers) > 5: break # Limit
+                    except Exception:
+                        pass
+                    if desc or triggers: break
+            
+            # Fallback for triggers if empty but we have description
+            if not triggers and desc:
+                # Simple extraction of anything in backticks or capitalized words? 
+                # (Keep it simple for now)
+                pass
+
+            return {"description": desc, "triggers": triggers}
+
         for base_dir in search_dirs:
             if not base_dir.exists() or not base_dir.is_dir():
                 continue
@@ -769,11 +819,14 @@ class ConfigManager:
                     if path_str not in local_skills:
                         is_git = (item / ".git").exists()
                         git_info = get_git_info(item) if is_git else None
+                        meta = parse_skill_metadata(item)
                         local_skills[path_str] = {
                             "id": skill_id,
                             "path": path_str,
                             "isGitRepo": is_git,
                             "gitInfo": git_info,
+                            "description": meta["description"],
+                            "triggers": meta["triggers"],
                             "enabled": entries.get(skill_id, {}).get("enabled", False),
                             "inConfig": skill_id in entries,
                             "category": category
@@ -789,7 +842,8 @@ class ConfigManager:
                     "id": skill_id,
                     "path": "Unknown",
                     "isGitRepo": False,
-                    "gitInfo": None,
+                    "description": "無法取得檔案資訊",
+                    "triggers": [],
                     "enabled": entry_data.get("enabled", False),
                     "inConfig": True,
                     "category": "workspace"

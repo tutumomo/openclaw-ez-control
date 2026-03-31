@@ -183,10 +183,15 @@ export interface SkillItem {
   id: string;
   path: string;
   isGitRepo: boolean;
-  gitInfo?: { hash: string; date: string } | null;
   enabled: boolean;
   inConfig: boolean;
   category: 'global' | 'workspace' | 'system';
+  gitInfo?: {
+    hash: string;
+    date: string;
+  };
+  description?: string;
+  triggers?: string[];
 }
 
 export interface SkillsSummaryResponse {
