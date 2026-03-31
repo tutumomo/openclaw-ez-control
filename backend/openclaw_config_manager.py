@@ -1016,23 +1016,23 @@ class ConfigManager:
 
     def update_agent(self, agent_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         config = self.load()
-        agents_section = config.get("agents", {})
-        agent_list = agents_section.get("list", [])
+        agents_section = config.setdefault("agents", {})
+        agent_list = agents_section.setdefault("list", [])
         
-        found = False
+        found_idx = -1
         for i, agent in enumerate(agent_list):
             if agent.get("id") == agent_id:
                 # For complex fields like tools, we expect the full nested structure from frontend
                 # We perform a shallow update for top-level keys
                 agent_list[i].update(updates)
-                found = True
+                found_idx = i
                 break
         
-        if not found:
+        if found_idx == -1:
             return {"success": False, "message": f"找不到 Agent ID: {agent_id}"}
             
         # Proactively flatten skills if they come in the old object format from the UI
-        agent_obj = agent_list[i]
+        agent_obj = agent_list[found_idx]
         if "skills" in agent_obj and isinstance(agent_obj["skills"], dict):
             if "allow" in agent_obj["skills"]:
                 agent_obj["skills"] = agent_obj["skills"]["allow"]
