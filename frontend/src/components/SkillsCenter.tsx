@@ -24,6 +24,7 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [metadataCache, setMetadataCache] = useState<Record<string, { description: string; triggers: string[] }>>({});
   const [loadingMetadata, setLoadingMetadata] = useState<Record<string, boolean>>({});
+  const [isUpdatingAll, setIsUpdatingAll] = useState(false);
 
   useEffect(() => {
     const gitPaths = skills.filter(s => s.isGitRepo).map(s => s.path);
@@ -89,6 +90,20 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
       setTimeout(() => setPulledId(null), 2000);
     } finally {
       setPullingId(null);
+    }
+  };
+
+  const handleUpdateAll = async () => {
+    const skillsToUpdate = skills.filter(s => s.isGitRepo && updateStatuses[s.path]?.needsUpdate);
+    if (skillsToUpdate.length === 0 || busy || isUpdatingAll) return;
+    
+    setIsUpdatingAll(true);
+    try {
+      for (const skill of skillsToUpdate) {
+        await handlePullClick(skill);
+      }
+    } finally {
+      setIsUpdatingAll(false);
     }
   };
 
@@ -303,10 +318,24 @@ export default function SkillsCenter({ skills, agents = [], busy, onToggle, onPu
               在這裡管理所有的 OpenClaw 技能。你可以啟用、停用、更新以及新增 Git 技能。
             </p>
           </div>
-          <div>
+          <div className="flex items-center gap-3">
+            {skills.some(s => s.isGitRepo && updateStatuses[s.path]?.needsUpdate) && (
+              <button
+                disabled={!!busy || checkingUpdates || isUpdatingAll}
+                onClick={handleUpdateAll}
+                className={`py-2 px-4 rounded-xl transition flex items-center gap-2 border ${
+                  isUpdatingAll 
+                    ? 'bg-amber-500/10 text-amber-500 border-amber-500/30' 
+                    : 'bg-teal-600/10 hover:bg-teal-600/20 text-teal-400 border-teal-500/30'
+                }`}
+              >
+                <RefreshCw className={`w-5 h-5 ${isUpdatingAll ? 'animate-spin' : ''}`} />
+                {isUpdatingAll ? '正在全部更新...' : `全部更新 (${skills.filter(s => s.isGitRepo && updateStatuses[s.path]?.needsUpdate).length})`}
+              </button>
+            )}
             <button
               onClick={() => setShowAddModal(true)}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-xl transition flex items-center gap-2"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-xl transition flex items-center gap-2 shadow-lg shadow-indigo-500/20"
             >
               <Plus className="w-5 h-5" />
               新增技能
