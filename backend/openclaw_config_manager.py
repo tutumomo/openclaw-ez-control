@@ -708,6 +708,7 @@ class ConfigManager:
         # Get available agents and build dynamic workspace paths
         agents_section = config.get("agents", {})
         agent_list = agents_section.get("list", [])
+        agent_names = [a.get("id") for a in agent_list if a.get("id")]
         
         # We'll use a set of strings to keep search paths unique
         unique_search_dirs = {
@@ -791,7 +792,7 @@ class ConfigManager:
                     "gitInfo": None,
                     "enabled": entry_data.get("enabled", False),
                     "inConfig": True,
-                    "category": "system"
+                    "category": "workspace"
                 }
                 
         return {
