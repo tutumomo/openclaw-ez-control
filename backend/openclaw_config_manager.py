@@ -709,28 +709,29 @@ class ConfigManager:
         agents_section = config.get("agents", {})
         agent_list = agents_section.get("list", [])
         
-        search_dirs = [
-            Path.home() / ".openclaw" / "skills",
-            Path.home() / ".openclaw" / "workspace" / "skills",
-            Path.home() / ".agents" / "skills",
-            Path.home() / ".gemini" / "antigravity" / "skills"
-        ]
+        # We'll use a set of strings to keep search paths unique
+        unique_search_dirs = {
+            str(Path.home() / ".openclaw" / "skills"),
+            str(Path.home() / ".openclaw" / "workspace" / "skills")
+        }
         
         # Add all agent specific skill paths (state dir and defined workspace)
         for agent in agent_list:
             agent_id = agent.get("id")
             if agent_id:
                 # 1. State dir skills
-                search_dirs.append(Path.home() / ".openclaw" / "agents" / agent_id / "skills")
+                unique_search_dirs.add(str(Path.home() / ".openclaw" / "agents" / agent_id / "skills"))
             
             # 2. Workspace skills (if defined)
             ws_path = agent.get("workspace")
             if ws_path:
                 try:
                     ws_skills = Path(ws_path).expanduser() / "skills"
-                    search_dirs.append(ws_skills)
+                    unique_search_dirs.add(str(ws_skills))
                 except Exception:
                     pass
+
+        search_dirs = [Path(d) for d in unique_search_dirs]
 
         local_skills: Dict[str, Dict[str, Any]] = {}
         
@@ -750,15 +751,15 @@ class ConfigManager:
             if not base_dir.exists() or not base_dir.is_dir():
                 continue
             
-            # Determine category based on path
-            category = "system"
-            dir_str = str(base_dir)
-            if dir_str == str(Path.home() / ".openclaw" / "skills"):
-                category = "global"
-            elif "/agents/" in dir_str or "/workspace/" in dir_str or ".openclaw/workspace" in dir_str:
-                category = "workspace"
-            elif ".agents/skills" in dir_str or ".gemini/antigravity" in dir_str:
-                category = "system"
+            # Determine category based on path (Simple Global vs Workspace)
+            global_p_res = (Path.home() / ".openclaw" / "skills").resolve()
+            
+            try:
+                is_global = base_dir.resolve() == global_p_res
+            except Exception:
+                is_global = False
+                
+            category = "global" if is_global else "workspace"
 
             for item in base_dir.iterdir():
                 if item.is_dir() and not item.name.startswith("."):
