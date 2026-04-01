@@ -319,6 +319,7 @@ class ConfigManager:
                     "modelFallbacks": model_fallbacks,
                     "visionFallbacks": vision_fallbacks,
                     "skills": agent.get("skills", []), # 支援 2026.3.31 技能陣列
+                    "sandbox": agent.get("sandbox", "auto"), # 支援 2026.3.31 沙盒
                     "effectiveModel": model or default_model,
                     "effectiveFallbackModel": fallback or default_fallback,
                     "effectiveVisionModel": vision or default_vision,
