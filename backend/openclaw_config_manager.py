@@ -15,10 +15,24 @@ from typing import Any, Dict, List, Optional
 from copy import deepcopy
 
 OPENCLAW_CLI = os.getenv("OPENCLAW_CLI", "openclaw")
-DEFAULT_CONFIG_PATH = Path(
-    os.getenv("OPENCLAW_CONFIG_PATH", str(Path.home() / ".openclaw" / "openclaw.json"))
-).expanduser()
-PLUGIN_WIZARD_DIR = Path.home() / ".openclaw" / "plugin-wizard"
+
+def get_effective_config_path() -> Path:
+    """遵循 2026.3.31 優先權邏輯解析 openclaw.json 路徑。"""
+    # 1. 優先取環境變量
+    env_path = os.getenv("OPENCLAW_CONFIG_PATH")
+    if env_path:
+        return Path(env_path).expanduser()
+    
+    # 2. 取 STATE_DIR/openclaw.json
+    state_dir = os.getenv("OPENCLAW_STATE_DIR")
+    if state_dir:
+        return (Path(state_dir).expanduser() / "openclaw.json")
+    
+    # 3. 預設家用路徑
+    return Path.home() / ".openclaw" / "openclaw.json"
+
+DEFAULT_CONFIG_PATH = get_effective_config_path()
+PLUGIN_WIZARD_DIR = DEFAULT_CONFIG_PATH.parent / "plugin-wizard"
 FRONTEND_DIST_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
@@ -79,8 +93,20 @@ class ConfigManager:
         self.backup_dir.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> Dict[str, Any]:
+        """使用 OpenClaw CLI 以 JSON5 模式解析配置，避免註釋導致崩潰。"""
         if not self.config_path.exists():
             raise FileNotFoundError(f"設定檔不存在: {self.config_path}")
+        
+        # 使用 openclaw config get 取得已解析的 JSON (去除註釋)
+        # 這樣就不會因為 .json 裡有註釋而導致 Python 解析失敗
+        result = self._run_command([OPENCLAW_CLI, "config", "get", "--json"])
+        if result.success:
+            try:
+                return json.loads(result.stdout)
+            except json.JSONDecodeError:
+                pass
+        
+        # 後援方案（不推薦，遇到註釋會死）
         with self.config_path.open("r", encoding="utf-8") as f:
             return json.load(f)
 
@@ -292,6 +318,7 @@ class ConfigManager:
                     "visionModel": vision,
                     "modelFallbacks": model_fallbacks,
                     "visionFallbacks": vision_fallbacks,
+                    "skills": agent.get("skills", []), # 支援 2026.3.31 技能陣列
                     "effectiveModel": model or default_model,
                     "effectiveFallbackModel": fallback or default_fallback,
                     "effectiveVisionModel": vision or default_vision,
@@ -765,8 +792,9 @@ class ConfigManager:
             for item in base_dir.iterdir():
                 if item.is_dir() and not item.name.startswith("."):
                     skill_id = item.name
-                    path_str = item.as_posix() # Normalized to forward slashes
+                    path_str = item.as_posix()
                     if path_str not in local_skills:
+                        has_manifest = (item / "openclaw.plugin.json").exists()
                         is_git = (item / ".git").exists()
                         git_info = get_git_info(item) if is_git else None
                         local_skills[path_str] = {
@@ -776,7 +804,9 @@ class ConfigManager:
                             "gitInfo": git_info,
                             "enabled": entries.get(skill_id, {}).get("enabled", False),
                             "inConfig": skill_id in entries,
-                            "category": category
+                            "category": category,
+                            "isV2": has_manifest, # 2026.3.31 標準：必須有 manifest
+                            "legacy": not has_manifest
                         }
         
         # Also add skills that are in config but not found on disk (maybe remote or other paths?)
@@ -1044,7 +1074,7 @@ class ConfigManager:
 
     def get_agent_markdown_files(self, agent_id: str) -> List[Dict[str, Any]]:
         # 1. 確定私體目錄 (State Dir)
-        state_dir = Path.home() / ".openclaw" / "agents" / agent_id
+        state_dir = self.config_path.parent / "agents" / agent_id
         
         # 2. 從配置中獲取定義的工作空間 (Workspace Dir)
         workspace_dir: Optional[Path] = None

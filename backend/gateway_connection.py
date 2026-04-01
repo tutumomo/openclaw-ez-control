@@ -45,7 +45,8 @@ class GatewayConnectionManager:
                 capture_output=True,
                 text=True,
                 timeout=10,
-                shell=is_windows
+                shell=is_windows,
+                env=os.environ # 繼承環境變數，包含 STATE_DIR 與 CONFIG_PATH
             )
             
             is_running = result.returncode == 0
