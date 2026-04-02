@@ -126,6 +126,9 @@ class ConfigManager:
         agent_list = agents_cfg.get("list", [])
         
         for agent in agent_list:
+            # 2026.3.31：徹底移除 JSON 中的 instructions，它是違規鍵值
+            agent.pop("instructions", None)
+
             # 1. 清理技能
             skills = agent.get("skills")
             if isinstance(skills, list):
@@ -1073,6 +1076,22 @@ class ConfigManager:
                     for t in allow:
                         tool_catalog.add(t)
         
+        # Enrich agents with virtual instructions from physical AGENTS.md
+        for agent in agent_list:
+            ws_path = agent.get("workspace")
+            if ws_path:
+                agents_md = Path(ws_path).expanduser() / "AGENTS.md"
+                if agents_md.exists():
+                    try:
+                        content = agents_md.read_text(encoding="utf-8")
+                        # 擷取首段核心使命作為指令預覽
+                        import re
+                        match = re.search(r"## 核心使命\n+(.*?)(?=\n+##|---|$)", content, re.DOTALL)
+                        if match:
+                            agent["instructions"] = match.group(1).strip()
+                    except Exception:
+                        pass
+        
         return {
             "defaults": defaults,
             "agents": agent_list,
@@ -1085,11 +1104,12 @@ class ConfigManager:
         agents_section = config.setdefault("agents", {})
         agent_list = agents_section.setdefault("list", [])
         
+        # Intercept and extract 'instructions' for physical sync
+        instructions = updates.pop("instructions", None)
+
         found_idx = -1
         for i, agent in enumerate(agent_list):
             if agent.get("id") == agent_id:
-                # For complex fields like tools, we expect the full nested structure from frontend
-                # We perform a shallow update for top-level keys
                 agent_list[i].update(updates)
                 found_idx = i
                 break
@@ -1097,8 +1117,32 @@ class ConfigManager:
         if found_idx == -1:
             return {"success": False, "message": f"找不到 Agent ID: {agent_id}"}
             
-        # Proactively flatten and deduplicate skills
         agent_obj = agent_list[found_idx]
+
+        # 物理同步：若有無效 instructions 鍵，再次確保它不存在
+        agent_obj.pop("instructions", None)
+
+        if instructions is not None:
+            ws_path = agent_obj.get("workspace")
+            if ws_path:
+                agents_md = Path(ws_path).expanduser() / "AGENTS.md"
+                try:
+                    if agents_md.exists():
+                        content = agents_md.read_text(encoding="utf-8")
+                        # 若存在「核心使命」區塊，則替換其內容
+                        import re
+                        pattern = r"(## 核心使命\n+).*?(?=\n+##|---|$)"
+                        new_content = re.sub(pattern, f"\\1{instructions}\n", content, flags=re.DOTALL)
+                        if new_content == content: # 若沒匹配到，補在開頭
+                            new_content = f"## 核心使命\n\n{instructions}\n\n" + content
+                        agents_md.write_text(new_content, encoding="utf-8")
+                    else: # 若檔案不存在，新建一個
+                        agents_md.parent.mkdir(parents=True, exist_ok=True)
+                        agents_md.write_text(f"# AGENTS.md\n\n## 核心使命\n\n{instructions}\n", encoding="utf-8")
+                except Exception as e:
+                    logger.error(f"無法同步物理指令: {str(e)}")
+
+        # Proactively flatten and deduplicate skills
         if "skills" in agent_obj:
             if isinstance(agent_obj["skills"], dict):
                 if "allow" in agent_obj["skills"]:
@@ -1106,12 +1150,11 @@ class ConfigManager:
                 else:
                     agent_obj["skills"] = []
             
-            # 2026.3.31 修復：強制唯一化與排序
             if isinstance(agent_obj["skills"], list):
                 agent_obj["skills"] = sorted(list(set(agent_obj["skills"])))
 
         self.save_with_safety(config)
-        return {"success": True, "message": f"Agent {agent_id} 更新成功"}
+        return {"success": True, "message": f"Agent {agent_id} 更新成功（指令已同步至實體檔案）"}
 
     def get_agent_markdown_files(self, agent_id: str) -> List[Dict[str, Any]]:
         # 1. 確定私體目錄 (State Dir)
