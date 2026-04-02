@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil as which_shutil
 import shutil
@@ -13,6 +14,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from copy import deepcopy
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("EZ-Control-Config")
 
 OPENCLAW_CLI = os.getenv("OPENCLAW_CLI", "openclaw")
 
@@ -98,17 +103,43 @@ class ConfigManager:
             raise FileNotFoundError(f"設定檔不存在: {self.config_path}")
         
         # 使用 openclaw config get 取得已解析的 JSON (去除註釋)
-        # 這樣就不會因為 .json 裡有註釋而導致 Python 解析失敗
         result = self._run_command([OPENCLAW_CLI, "config", "get", "--json"])
+        config = None
         if result.success:
             try:
-                return json.loads(result.stdout)
+                config = json.loads(result.stdout)
             except json.JSONDecodeError:
                 pass
         
-        # 後援方案（不推薦，遇到註釋會死）
-        with self.config_path.open("r", encoding="utf-8") as f:
-            return json.load(f)
+        if config is None:
+            # 後援方案
+            with self.config_path.open("r", encoding="utf-8") as f:
+                config = json.load(f)
+
+        # 2026.3.31：全域自動淨化 (Sanitize all agents on load)
+        self.batch_sanitize_config(config)
+        return config
+
+    def batch_sanitize_config(self, config: Dict[str, Any]) -> None:
+        """遍歷並去重所有代理人的技能與工具配置。"""
+        agents_cfg = config.get("agents", {})
+        agent_list = agents_cfg.get("list", [])
+        
+        for agent in agent_list:
+            # 1. 清理技能
+            skills = agent.get("skills")
+            if isinstance(skills, list):
+                agent["skills"] = sorted(list(set(skills)))
+            elif isinstance(skills, dict) and "allow" in skills:
+                skills["allow"] = sorted(list(set(skills["allow"])))
+
+            # 2. 清理工具 (針對 allow 名單而非通配符)
+            tools = agent.get("tools", {})
+            if isinstance(tools, dict) and "allow" in tools:
+                if isinstance(tools["allow"], list):
+                    tools["allow"] = sorted(list(set(tools["allow"])))
+        
+        logger.info("[Hygiene] 全域代理人配置已自動去重完成。")
 
     def get_summary(self) -> Dict[str, Any]:
         config = self.load()
@@ -794,11 +825,15 @@ class ConfigManager:
                 if item.is_dir() and not item.name.startswith("."):
                     skill_id = item.name
                     path_str = item.as_posix()
-                    if path_str not in local_skills:
+                    
+                    # 優先級邏輯：workspace 技能覆蓋 global 技能
+                    # 如果該 ID 尚未存在，或當前是 workspace 技能而舊的是 global 技能，則進行覆蓋/新增
+                    existing_skill = local_skills.get(skill_id)
+                    if not existing_skill or (category == "workspace" and existing_skill["category"] == "global"):
                         has_manifest = (item / "openclaw.plugin.json").exists()
                         is_git = (item / ".git").exists()
                         git_info = get_git_info(item) if is_git else None
-                        local_skills[path_str] = {
+                        local_skills[skill_id] = {
                             "id": skill_id,
                             "path": path_str,
                             "isGitRepo": is_git,
@@ -806,7 +841,7 @@ class ConfigManager:
                             "enabled": entries.get(skill_id, {}).get("enabled", False),
                             "inConfig": skill_id in entries,
                             "category": category,
-                            "isV2": has_manifest, # 2026.3.31 標準：必須有 manifest
+                            "isV2": has_manifest,
                             "legacy": not has_manifest
                         }
         
@@ -1062,13 +1097,18 @@ class ConfigManager:
         if found_idx == -1:
             return {"success": False, "message": f"找不到 Agent ID: {agent_id}"}
             
-        # Proactively flatten skills if they come in the old object format from the UI
+        # Proactively flatten and deduplicate skills
         agent_obj = agent_list[found_idx]
-        if "skills" in agent_obj and isinstance(agent_obj["skills"], dict):
-            if "allow" in agent_obj["skills"]:
-                agent_obj["skills"] = agent_obj["skills"]["allow"]
-            else:
-                agent_obj["skills"] = []
+        if "skills" in agent_obj:
+            if isinstance(agent_obj["skills"], dict):
+                if "allow" in agent_obj["skills"]:
+                    agent_obj["skills"] = agent_obj["skills"]["allow"]
+                else:
+                    agent_obj["skills"] = []
+            
+            # 2026.3.31 修復：強制唯一化與排序
+            if isinstance(agent_obj["skills"], list):
+                agent_obj["skills"] = sorted(list(set(agent_obj["skills"])))
 
         self.save_with_safety(config)
         return {"success": True, "message": f"Agent {agent_id} 更新成功"}
@@ -1285,6 +1325,23 @@ class ConfigManager:
                 if not found_files:
                     issues.append(f"工作空間中找不到核心定義檔 ({', '.join(core_files)})")
                     status = "warning"
+                else:
+                    # 檢查技能標誌對齊 (NEW)
+                    authorized_skills = target.get("skills", [])
+                    if authorized_skills:
+                        content = ""
+                        # 讀取主要檔案內容進行搜尋
+                        for cf in found_files:
+                            if cf in ['AGENTS.md', 'IDENTITY.md']:
+                                try:
+                                    content = (p / cf).read_text(encoding="utf-8")
+                                    break
+                                except: pass
+                        
+                        missing_tags = [s for s in authorized_skills if f"{{{{skill:{s}}}}}" not in content]
+                        if missing_tags:
+                            issues.append(f"偵測到 {len(missing_tags)} 項已授權技能尚未注入物理指令標誌 (Missing {{skill}} tags: {', '.join(missing_tags)})")
+                            if status == "healthy": status = "warning"
 
         # 2. 檢查隔離環境 (NEW)
         isolation = self.check_agent_isolation(agent_id)
@@ -1496,6 +1553,11 @@ class ConfigManager:
                 target.pop(k)
                 changes.append(f"移除了無效的空欄位: {k}")
 
+        # 4. 自動對齊技能指令標誌 (PHYSical Alignment)
+        alignment_report = self.align_agent_skill_directives(agent_id)
+        if alignment_report.get("aligned_count", 0) > 0:
+            changes.append(f"自動對齊了 {alignment_report['aligned_count']} 項技能指令標誌 (Added {{skill:slug}} tags)")
+
         if not changes:
             return {"success": True, "message": "配置已是最佳狀態，無需變更", "changes": []}
             
@@ -1506,3 +1568,61 @@ class ConfigManager:
             "message": f"成功執行了 {len(changes)} 項優化", 
             "changes": changes
         }
+
+    def align_agent_skill_directives(self, agent_id: str) -> Dict[str, Any]:
+        """掃描 Agent 工作區文件，確保所有已授權技能都有對應的 {{skill:slug}} 標誌。"""
+        config = self.load()
+        agents = config.get("agents", {}).get("list", [])
+        target = next((a for a in agents if a.get("id") == agent_id), None)
+        if not target:
+            return {"success": False, "message": "Agent 不存在"}
+            
+        authorized_skills = target.get("skills", [])
+        if not authorized_skills:
+            return {"success": True, "aligned_count": 0}
+
+        # 1. 獲取主要指令文件 (優先 AGENTS.md, 再者 IDENTITY.md)
+        markdown_files = self.get_agent_markdown_files(agent_id)
+        target_file_data = next((f for f in markdown_files if f["filename"] in ["AGENTS.md", "IDENTITY.md"]), None)
+        
+        if not target_file_data:
+            return {"success": False, "message": "找不到 AGENTS.md 或 IDENTITY.md，無法進行物理注入"}
+
+        filename = target_file_data["filename"]
+        content = target_file_data["content"]
+        path = target_file_data["path"]
+        
+        # 2. 檢測缺失的標誌
+        missing_skills = []
+        for slug in authorized_skills:
+            tag = f"{{{{skill:{slug}}}}}"
+            if tag not in content:
+                missing_skills.append(slug)
+        
+        if not missing_skills:
+            return {"success": True, "aligned_count": 0}
+            
+        # 3. 執行注入
+        new_content = content.rstrip()
+        new_content += "\n\n---\n\n## 🔧 技能整合指令 (Auto-Aligned Skills)\n\n"
+        new_content += "以下是由 OpenClaw EZ-Control 自動對齊載入的擴充技能指令集：\n\n"
+        
+        for slug in missing_skills:
+            # 嘗試取得版本號 (從 _meta.json)
+            skill_dir = self.config_path.parent / "skills" / slug
+            version_hint = ""
+            if (skill_dir / "_meta.json").exists():
+                try:
+                    meta = json.loads((skill_dir / "_meta.json").read_text(encoding="utf-8"))
+                    version_hint = f" [v{meta.get('version', 'unknown')}]"
+                except: pass
+            
+            new_content += f"- **{slug}**{version_hint}\n  {{{{skill:{slug}}}}}\n\n"
+            
+        new_content += "---\n"
+        
+        # 4. 存檔
+        save_res = self.save_agent_markdown_file(agent_id, filename, new_content)
+        if save_res["success"]:
+            return {"success": True, "aligned_count": len(missing_skills), "target_file": filename}
+        return {"success": False, "message": f"存檔失敗: {save_res.get('message')}"}
