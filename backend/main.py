@@ -120,6 +120,10 @@ class AgentClonePayload(BaseModel):
     target_id: str
 
 
+class InstanceConfigPayload(BaseModel):
+    config: Dict[str, Any]
+
+
 
 def check_gateway_connection():
     """檢查 Gateway 連接，如果斷線則嘗試重連。"""
@@ -484,6 +488,50 @@ async def optimize_agent(agent_id: str):
         return manager.optimize_agent(agent_id)
     except Exception as e:
         logger.error(f"Error optimizing agent {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/agents/{agent_id}/isolation")
+async def get_agent_isolation(agent_id: str):
+    """取得 Agent 的隔離狀態。"""
+    try:
+        check_gateway_connection()
+        return manager.check_agent_isolation(agent_id)
+    except Exception as e:
+        logger.error(f"Error getting isolation for {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agents/{agent_id}/provision")
+async def provision_agent(agent_id: str):
+    """撥備 Agent 的隔離環境。"""
+    try:
+        check_gateway_connection()
+        return manager.provision_agent_isolation(agent_id)
+    except Exception as e:
+        logger.error(f"Error provisioning agent {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/agents/{agent_id}/instance-config")
+async def get_instance_config(agent_id: str):
+    """讀取 Agent 的實例專屬設定 (Vault)。"""
+    try:
+        check_gateway_connection()
+        return manager.get_agent_instance_config(agent_id)
+    except Exception as e:
+        logger.error(f"Error reading instance config for {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agents/{agent_id}/instance-config")
+async def save_instance_config(agent_id: str, payload: InstanceConfigPayload):
+    """儲存 Agent 的實例專屬設定 (Vault)。"""
+    try:
+        check_gateway_connection()
+        return manager.save_agent_instance_config(agent_id, payload.config)
+    except Exception as e:
+        logger.error(f"Error saving instance config for {agent_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

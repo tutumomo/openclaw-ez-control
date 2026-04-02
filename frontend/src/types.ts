@@ -238,3 +238,19 @@ export interface AgentFile {
   sizeBytes: number;
   modifiedAt: string;
 }
+
+export interface AgentIsolationStatus {
+  agentId: string;
+  baseDir: string;
+  exists: boolean;
+  provisioned: boolean;
+  details: Record<string, boolean>;
+  hasVault?: boolean;
+}
+
+export interface InstanceConfigResponse {
+  success: boolean;
+  config: Record<string, any>;
+  message?: string;
+  not_found?: boolean;
+}

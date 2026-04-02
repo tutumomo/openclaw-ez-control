@@ -3,7 +3,8 @@ import type {
   BackupsResponse, ConfigSummary, MemorySummaryResponse, ModelSummaryResponse, 
   PluginWizardActionResult, PluginWizardSummaryResponse, RollbackResponse, 
   SaveResponse, SystemStatus, ValidateResponse, TelegramChannelsResponse, 
-  SkillsSummaryResponse, TelegramAccount, SkillUpdateStatus 
+  SkillsSummaryResponse, TelegramAccount, SkillUpdateStatus,
+  AgentIsolationStatus, InstanceConfigResponse
 } from './types';
 
 const apiBaseURL = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '/api';
@@ -80,3 +81,15 @@ export const checkAgent = async (agentId: string) =>
 
 export const optimizeAgent = async (agentId: string) =>
   (await api.post<{ success: boolean; message: string; changes: string[] }>(`/agents/${agentId}/optimize`)).data;
+
+export const getAgentIsolation = async (agentId: string) =>
+  (await api.get<AgentIsolationStatus>(`/agents/${agentId}/isolation`)).data;
+
+export const provisionAgentIsolation = async (agentId: string) =>
+  (await api.post<{ success: boolean; message: string; baseDir?: string }>(`/agents/${agentId}/provision`)).data;
+
+export const getAgentInstanceConfig = async (agentId: string) =>
+  (await api.get<InstanceConfigResponse>(`/agents/${agentId}/instance-config`)).data;
+
+export const saveAgentInstanceConfig = async (agentId: string, config: Record<string, any>) =>
+  (await api.post<SaveResponse>(`/agents/${agentId}/instance-config`, { config })).data;

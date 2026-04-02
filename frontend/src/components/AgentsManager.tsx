@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { UserCircle, Brain, ShieldCheck, MessageSquare, Save, Settings2, Info, ChevronRight, CheckCircle2, AlertCircle, RefreshCw, Wrench, Code2, FileText, FileCode, Copy, Trash2, SearchCheck, Zap } from 'lucide-react';
-import type { AgentConfig, AgentsSummaryResponse, SaveResponse, SkillItem, AgentFile } from '../types';
-import { updateAgent, getAgentFiles, updateAgentFile, deleteAgent, cloneAgent, runDoctor, checkAgent, optimizeAgent } from '../api';
+import { UserCircle, Brain, ShieldCheck, MessageSquare, Save, Settings2, Info, ChevronRight, CheckCircle2, AlertCircle, RefreshCw, Wrench, Code2, FileText, FileCode, Copy, Trash2, SearchCheck, Zap, Shield, Key, Check, X } from 'lucide-react';
+import type { AgentConfig, AgentsSummaryResponse, SaveResponse, SkillItem, AgentFile, AgentIsolationStatus, InstanceConfigResponse } from '../types';
+import { updateAgent, getAgentFiles, updateAgentFile, deleteAgent, cloneAgent, runDoctor, checkAgent, optimizeAgent, getAgentIsolation, provisionAgentIsolation, getAgentInstanceConfig, saveAgentInstanceConfig } from '../api';
 
 interface AgentsManagerProps {
   summary: AgentsSummaryResponse;
@@ -12,13 +12,18 @@ interface AgentsManagerProps {
 export default function AgentsManager({ summary, allSkills, onRefresh }: AgentsManagerProps) {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(summary.agents[0]?.id || null);
   const [editingAgent, setEditingAgent] = useState<AgentConfig | null>(null);
-  const [activeTab, setActiveTab] = useState<'identity' | 'brain' | 'capabilities' | 'social' | 'memory' | 'files'>('identity');
+  const [activeTab, setActiveTab] = useState<'identity' | 'brain' | 'capabilities' | 'social' | 'memory' | 'files' | 'isolation' | 'vault'>('identity');
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [agentFiles, setAgentFiles] = useState<AgentFile[]>([]);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [fileEditingContent, setFileEditingContent] = useState<string>('');
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+
+  // New Isolation & Vault State
+  const [isolationStatus, setIsolationStatus] = useState<AgentIsolationStatus | null>(null);
+  const [instanceConfig, setInstanceConfig] = useState<string>('{}');
+  const [isProvisioning, setIsProvisioning] = useState(false);
 
   const selectedAgent = summary.agents.find(a => a.id === selectedAgentId);
 
@@ -27,6 +32,7 @@ export default function AgentsManager({ summary, allSkills, onRefresh }: AgentsM
       setEditingAgent(JSON.parse(JSON.stringify(selectedAgent)));
       setSaveStatus(null);
       fetchAgentFiles(selectedAgent.id);
+      fetchIsolationAndVault(selectedAgent.id);
     }
   }, [selectedAgentId, summary.agents]);
 
@@ -46,6 +52,61 @@ export default function AgentsManager({ summary, allSkills, onRefresh }: AgentsM
       console.error("Failed to fetch agent files", err);
     } finally {
       setIsLoadingFiles(false);
+    }
+  };
+
+  const fetchIsolationAndVault = async (agentId: string) => {
+    try {
+      const [iso, vault] = await Promise.all([
+        getAgentIsolation(agentId),
+        getAgentInstanceConfig(agentId)
+      ]);
+      setIsolationStatus(iso);
+      setInstanceConfig(JSON.stringify(vault.config, null, 2));
+    } catch (err) {
+      console.error("Failed to fetch isolation/vault data", err);
+    }
+  };
+
+  const handleProvision = async () => {
+    if (!editingAgent) return;
+    setIsProvisioning(true);
+    try {
+      const res = await provisionAgentIsolation(editingAgent.id);
+      if (res.success) {
+        setSaveStatus({ type: 'success', message: res.message || '隔離環境初始化成功！' });
+        await fetchIsolationAndVault(editingAgent.id);
+      } else {
+        setSaveStatus({ type: 'error', message: res.message || '初始化失敗' });
+      }
+    } catch (err: any) {
+      setSaveStatus({ type: 'error', message: err.message || '初始化過程發生錯誤' });
+    } finally {
+      setIsProvisioning(false);
+    }
+  };
+
+  const handleSaveVault = async () => {
+    if (!editingAgent) return;
+    try {
+      let configObj;
+      try {
+        configObj = JSON.parse(instanceConfig);
+      } catch (e) {
+        setSaveStatus({ type: 'error', message: '憑證格式錯誤，請確保為標準 JSON 格式。' });
+        return;
+      }
+      setIsSaving(true);
+      const res = await saveAgentInstanceConfig(editingAgent.id, configObj);
+      if (res.success) {
+        setSaveStatus({ type: 'success', message: '憑證金庫已安全儲存！' });
+      } else {
+        setSaveStatus({ type: 'error', message: res.message || '憑證儲存失敗' });
+      }
+    } catch (err: any) {
+      setSaveStatus({ type: 'error', message: err.message || '儲存過程發生錯誤' });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -318,6 +379,8 @@ export default function AgentsManager({ summary, allSkills, onRefresh }: AgentsM
             { id: 'files', label: '核心定義檔案', icon: FileCode },
             { id: 'brain', label: '模型大腦', icon: Brain },
             { id: 'capabilities', label: '工具與技能', icon: Wrench },
+            { id: 'isolation', label: '實例隔離', icon: Shield },
+            { id: 'vault', label: '憑證金庫', icon: Key },
             { id: 'social', label: '代理社交', icon: MessageSquare },
             { id: 'memory', label: '記憶檢索', icon: ShieldCheck },
           ].map(tab => (
@@ -388,6 +451,115 @@ export default function AgentsManager({ summary, allSkills, onRefresh }: AgentsM
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-4 text-slate-300 font-mono text-sm leading-relaxed focus:outline-none focus:border-blue-500 shadow-inner"
                 />
               </div>
+            </div>
+          )}
+
+          {activeTab === 'isolation' && (
+            <div className="space-y-6 max-w-4xl">
+              <div className="p-6 bg-slate-900/50 border border-slate-800 rounded-xl">
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-100 flex items-center">
+                      <Shield size={20} className="mr-2 text-blue-500" /> 多租戶資源隔離狀態
+                    </h3>
+                    <p className="text-sm text-slate-500 mt-1">
+                      此代理人的專屬實例目錄：<code className="bg-black/40 px-2 py-0.5 rounded text-blue-300 font-mono text-xs">{isolationStatus?.baseDir}</code>
+                    </p>
+                    {(isolationStatus as any)?.port && (
+                      <p className="text-sm text-blue-400 mt-2 flex items-center font-bold">
+                        <Zap size={14} className="mr-2" /> 專屬執行端口：<span className="bg-blue-500/20 px-2 py-0.5 rounded ml-1 tracking-widest">{ (isolationStatus as any).port }</span>
+                      </p>
+                    )}
+                  </div>
+                  <div className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider ${
+                    isolationStatus?.provisioned ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                  }`}>
+                    {isolationStatus?.provisioned ? '已經撥備 (Ready)' : '未初始化 (Legacy)'}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                  {['state', 'memory', 'private', 'logs'].map(dir => (
+                    <div key={dir} className={`p-4 rounded-lg border flex flex-col items-center transition-all ${
+                      isolationStatus?.details?.[dir] ? 'bg-slate-800/40 border-slate-700' : 'bg-red-900/10 border-red-900/30 text-red-400'
+                    }`}>
+                      <div className={`w-8 h-8 rounded-full mb-3 flex items-center justify-center ${
+                        isolationStatus?.details?.[dir] ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                      }`}>
+                        {isolationStatus?.details?.[dir] ? <Check size={16} /> : <X size={16} />}
+                      </div>
+                      <span className="text-xs font-bold uppercase tracking-widest">{dir}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {!isolationStatus?.provisioned && (
+                  <div className="bg-blue-600/5 border border-blue-500/20 p-6 rounded-xl flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-bold text-blue-400 mb-1">一鍵初始化實例環境</h4>
+                      <p className="text-xs text-slate-400">系統將自動在預設路徑下建立標準隔離目錄結構 (state, memory, private, logs)。</p>
+                    </div>
+                    <button 
+                      onClick={handleProvision}
+                      disabled={isProvisioning}
+                      className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-bold shadow-lg transition-all active:scale-95 disabled:opacity-50 flex items-center"
+                    >
+                      {isProvisioning ? <RefreshCw className="animate-spin mr-2" size={16} /> : <Zap size={16} className="mr-2" />}
+                      初始化隔離環境
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 flex items-start bg-amber-500/5 border border-amber-500/10 rounded-lg">
+                <Info size={16} className="text-amber-500 mt-0.5 mr-3 shrink-0" />
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  專業建議：2026.4.2 安全規範要求所有交易類 Agent 及其 Background Workers 必須指向專屬的 <code className="text-amber-500/80">instances/{editingAgent.id}/private</code> 目錄存放金鑰，避免與其他家庭成員交叉污染。
+                </p>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'vault' && (
+            <div className="space-y-6 max-w-4xl">
+              <div className="flex justify-between items-end border-b border-slate-800 pb-4">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-100 flex items-center">
+                    <Key size={20} className="mr-2 text-amber-500" /> 私有憑證金庫 (Instance Config)
+                  </h3>
+                  <p className="text-sm text-slate-500 mt-1">此設定檔將安全地存放在 <code className="bg-black/40 px-1 py-0.5 rounded text-amber-500 font-mono text-xs">private/instance_config.json</code>，排除在 Git 範疇外。</p>
+                </div>
+                <button 
+                  onClick={handleSaveVault}
+                  disabled={isSaving}
+                  className="px-6 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-bold shadow-lg shadow-amber-900/20 transition-all active:scale-95 disabled:opacity-50 flex items-center"
+                >
+                  {isSaving ? <RefreshCw className="animate-spin mr-2" size={16} /> : <Save size={16} className="mr-2" />}
+                  更新憑證金庫
+                </button>
+              </div>
+
+              <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-inner">
+                <div className="bg-slate-900/50 px-4 py-2 border-b border-slate-800 flex justify-between text-[10px] font-mono text-slate-500">
+                  <span>instance_config.json</span>
+                  <span className="text-amber-500/60 uppercase tracking-widest">券商憑證/API KEY 存放區</span>
+                </div>
+                <textarea 
+                  rows={20} 
+                  value={instanceConfig} 
+                  onChange={e => setInstanceConfig(e.target.value)}
+                  placeholder={`{\n  "broker": "fugle",\n  "api_key": "YOUR_SECRET_KEY",\n  "api_secret": "..."\n}`}
+                  className="w-full bg-transparent p-6 text-amber-500/80 font-mono text-sm leading-relaxed focus:outline-none resize-none"
+                  spellCheck={false}
+                />
+              </div>
+
+              {!isolationStatus?.hasVault && (
+                <div className="p-4 bg-red-500/5 border border-red-500/20 rounded-lg flex items-center text-red-400">
+                  <AlertCircle size={16} className="mr-3 shrink-0" />
+                  <span className="text-xs">警告：尚未建立憑證金庫檔案。請點擊「更新憑證金庫」或先初始化隔離環境。</span>
+                </div>
+              )}
             </div>
           )}
 

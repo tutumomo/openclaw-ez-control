@@ -1286,13 +1286,19 @@ class ConfigManager:
                     issues.append(f"工作空間中找不到核心定義檔 ({', '.join(core_files)})")
                     status = "warning"
 
-        # 2. 檢查模型配置
+        # 2. 檢查隔離環境 (NEW)
+        isolation = self.check_agent_isolation(agent_id)
+        if not isolation["provisioned"]:
+            issues.append(f"隔離實例環境未就緒 (需初始化 instances/{agent_id})")
+            if status == "healthy": status = "info"
+
+        # 3. 檢查模型配置
         model = target.get("model", {})
         if not model.get("primary"):
             issues.append("未指定主力模型 (Primary Model)，將使用系統預設值")
             if status == "healthy": status = "info"
 
-        # 3. 檢查指令長度
+        # 4. 檢查指令長度
         instructions = target.get("instructions", "")
         if len(instructions) < 20:
             issues.append("系統指令 (Instructions) 過於簡短，可能影響表現")
@@ -1303,9 +1309,144 @@ class ConfigManager:
             "status": status,
             "agentId": agent_id,
             "issues": issues,
+            "isolation": isolation,
             "message": "檢測完成" if not issues else f"檢測到 {len(issues)} 個事項",
             "timestamp": datetime.now().isoformat()
         }
+
+    def check_agent_isolation(self, agent_id: str) -> Dict[str, Any]:
+        """檢測 Agent 的實例隔離目錄狀態。"""
+        # 標準隔離基路徑：~/.openclaw/instances/{agent_id}/
+        base_dir = self.config_path.parent / "instances" / agent_id
+        dirs = ["state", "memory", "private", "logs"]
+        
+        status = {
+            "agentId": agent_id,
+            "baseDir": str(base_dir),
+            "exists": base_dir.exists(),
+            "provisioned": False,
+            "details": {}
+        }
+        
+        if base_dir.exists():
+            provisioned_count = 0
+            for d in dirs:
+                p = base_dir / d
+                d_exists = p.exists() and p.is_dir()
+                status["details"][d] = d_exists
+                if d_exists: provisioned_count += 1
+            
+            # 如果主要子目錄都存在，視為已撥備
+            status["provisioned"] = (provisioned_count == len(dirs))
+            
+            # 檢查 Credential Vault (instance_config.json)
+            vault_p = base_dir / "private" / "instance_config.json"
+            status["hasVault"] = vault_p.exists()
+            
+        return status
+
+    def provision_agent_isolation(self, agent_id: str) -> Dict[str, Any]:
+        """一鍵建立 Agent 的多租戶隔離目錄結構，並分配專屬端口。"""
+        base_dir = self.config_path.parent / "instances" / agent_id
+        dirs = ["state", "memory", "private", "logs"]
+        
+        try:
+            base_dir.mkdir(parents=True, exist_ok=True)
+            created = []
+            for d in dirs:
+                (base_dir / d).mkdir(parents=True, exist_ok=True)
+                created.append(d)
+                
+            # 初始化或讀取 instance_config.json
+            vault_p = base_dir / "private" / "instance_config.json"
+            current_config = {}
+            if vault_p.exists():
+                try:
+                    current_config = json.loads(vault_p.read_text(encoding="utf-8"))
+                except:
+                    current_config = {}
+            
+            # 如果沒有端口設定，則掃描並分配 (從 8002 開始)
+            if "port" not in current_config:
+                assigned_port = self.find_available_port(start_port=8002)
+                current_config["port"] = assigned_port
+                created.append(f"assigned_port:{assigned_port}")
+                
+            # 寫回配置
+            vault_p.write_text(json.dumps(current_config, indent=2, ensure_ascii=False), encoding="utf-8")
+                
+            return {
+                "success": True,
+                "message": f"Agent {agent_id} 隔離環境初始化成功 (Port: {current_config.get('port')})",
+                "baseDir": str(base_dir),
+                "created": created,
+                "port": current_config.get("port")
+            }
+        except Exception as e:
+            return {"success": False, "message": f"撥備失敗: {str(e)}"}
+
+    def find_available_port(self, start_port: int = 8002) -> int:
+        """尋找從 start_port 開始的第一個可用端口。"""
+        import socket
+        port = start_port
+        # 同時考慮系統已佔用端口與已定義 Agent 的佔用端口
+        used_ports = self._get_defined_agent_ports()
+        
+        while port < 65535:
+            if port not in used_ports:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    try:
+                        s.bind(("127.0.0.1", port))
+                        return port
+                    except socket.error:
+                        pass
+            port += 1
+        return -1 # 沒找到可用端口
+
+    def _get_defined_agent_ports(self) -> set:
+        """收集所有已定義 Agent instances 中已分配的端口。"""
+        ports = set()
+        instances_dir = self.config_path.parent / "instances"
+        if not instances_dir.exists():
+            return ports
+            
+        for agent_dir in instances_dir.iterdir():
+            if agent_dir.is_dir():
+                vault_p = agent_dir / "private" / "instance_config.json"
+                if vault_p.exists():
+                    try:
+                        content = json.loads(vault_p.read_text(encoding="utf-8"))
+                        if "port" in content:
+                            ports.add(int(content["port"]))
+                    except:
+                        pass
+        return ports
+
+    def get_agent_instance_config(self, agent_id: str) -> Dict[str, Any]:
+        """讀取該 Agent 實例的專屬憑證與設定 (Vault)。"""
+        vault_p = self.config_path.parent / "instances" / agent_id / "private" / "instance_config.json"
+        
+        if not vault_p.exists():
+            return {"success": True, "config": {}, "not_found": True}
+            
+        try:
+            content = vault_p.read_text(encoding="utf-8")
+            return {"success": True, "config": json.loads(content)}
+        except Exception as e:
+            return {"success": False, "message": f"憑證讀取失敗: {str(e)}"}
+
+    def save_agent_instance_config(self, agent_id: str, config: Dict[str, Any]) -> Dict[str, Any]:
+        """儲存該 Agent 實例的專屬憑證與設定 (Vault)。"""
+        vault_dir = self.config_path.parent / "instances" / agent_id / "private"
+        vault_p = vault_dir / "instance_config.json"
+        
+        try:
+            vault_dir.mkdir(parents=True, exist_ok=True)
+            serialized = json.dumps(config, indent=2, ensure_ascii=False)
+            vault_p.write_text(serialized, encoding="utf-8")
+            return {"success": True, "message": f"Agent {agent_id} 憑證更新成功"}
+        except Exception as e:
+            return {"success": False, "message": f"憑證儲存失敗: {str(e)}"}
 
     def optimize_agent(self, agent_id: str) -> Dict[str, Any]:
         """實質優化 Agent 的配置結構。"""
